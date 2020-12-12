@@ -1,83 +1,53 @@
 use anyhow::*;
-use hidapi::{HidApi, HidDevice};
+use duckyctl::Keyboard;
 
-const VID_DUCKY: u16 = 0x04d9;
-const PID_DUCKY_ONE_2_TKL: u16 = 0x0356;
+mod key;
 
 fn main() -> Result<()> {
-    let hid = HidApi::new()
+    let hid = duckyctl::hid()
         .context("Failed to initialize hidapi")?;
 
-    let device = hid.device_list()
-        .filter(|dev| dev.vendor_id() == VID_DUCKY)
-        .filter(|dev| dev.product_id() == PID_DUCKY_ONE_2_TKL)
-        .filter(|dev| dev.interface_number() == 1)
-        .next()
-        .context("Could not find Duck One 2 TKL")?;
+    let mut kbd = Keyboard::open(&hid)?;
 
-    println!("{:#?}", device.path());
+    let states = &[
+        "r",
+        "ru",
+        "rus",
+        "rust",
+        "",
+        "rust",
+        "",
+        "rust",
+        "",
+    ];
 
-    let device = device.open_device(&hid)
-        .context("Failed to open device")?;
-    
-    // programming()
-    device.write(&[0x41, 0x01])?;
-
-    let mut colors = vec![0; 3 * 6 * 22];
-
-    for i in 0..6 * 22 {
-        if let Some(color) = colors.chunks_mut(3).nth(i) {
-            color[0] = 0x00;
-            color[1] = 0xFF;
-            color[2] = 0x00;
+    for _ in 0..1 {
+        for state in states {
+            light_chars(&mut kbd, state)?;
+            std::thread::sleep_ms(500);
         }
-
-        set_custom_colors(&device, &colors)?;
-
-        std::thread::sleep_ms(50);
     }
 
+    kbd.set_all_colors((0xFF, 0xFF, 0));
+    kbd.set_static_colors()?;
+
     std::thread::sleep_ms(2000);
-    device.write(&[0x41, 0x00])?;
+    kbd.enter_autonomous_mode()?;
 
     Ok(())
 }
 
-fn set_custom_colors(device: &HidDevice, colors: &[u8]) -> Result<()>{
-    device.write(&[
-        0x56, 0x81, 0x00, 0x00,
-        0x01, 0x00, 0x00, 0x00,
-        0x08, 0x00, 0x00, 0x00, // packet count?
-        0xaa, 0xaa, 0xaa, 0xaa
-    ])?;
+fn light_chars(kbd: &mut Keyboard, text: &str) -> Result<()> {
+    kbd.clear_colors();
 
-    let prefix = &[
-        0x01, 0x00, 0x00, 0x00,
-        0x80, 0x01, 0x00, 0xc1,
-        0x00, 0x00, 0x00, 0x00,
-        0xff, 0xff, 0xff, 0xff,
-        0x00, 0x00, 0x00, 0x00,
-    ];
-
-    let packet_count = 8;
-    let payload_len = 60;
-    let mut data = prefix.to_vec();
-    data.extend(colors);
-
-    for packet_index in 0..packet_count {
-        let packet_index = packet_index as u8;
-        let mut message = vec![0x56, 0x83, packet_index, 0x00];
-        let packet = data
-            .chunks(payload_len)
-            .nth(packet_index as usize)
-            .unwrap_or_default();
-        message.extend_from_slice(packet);
-        
-        device.write(&message)
-            .context("Failed to write packet")?;
+    for char in text.chars() {
+        if let Some(key) = key::qwertz(&char.to_string()) {
+            let color = (0x00, 0xFF, 0x00);
+            kbd.set_color(key, color);
+        }
     }
-    device.write(&[0x51, 0x28, 0x00, 0x00, 0xff])?;
 
-    // println!("{:#x?}", result);
+    kbd.set_static_colors()?;
+
     Ok(())
 }
